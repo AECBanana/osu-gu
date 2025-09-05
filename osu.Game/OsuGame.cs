@@ -15,6 +15,7 @@ using JetBrains.Annotations;
 using osu.Framework;
 using osu.Framework.Allocation;
 using osu.Framework.Audio;
+using osu.Framework.Audio.Asio;
 using osu.Framework.Bindables;
 using osu.Framework.Configuration;
 using osu.Framework.Extensions.IEnumerableExtensions;
@@ -1022,9 +1023,41 @@ namespace osu.Game
 
         protected override void Dispose(bool isDisposing)
         {
+            // Resume audio if it was paused for disposal
+            if (audioPausedOnInactive)
+            {
+                var musicController = dependencies?.Get<MusicController>();
+                if (musicController != null && !musicController.IsPlaying)
+                {
+                    musicController.Play(requestedByUser: false);
+                }
+                audioPausedOnInactive = false;
+            }
+
             // Without this, tests may deadlock due to cancellation token not becoming cancelled before disposal.
             // To reproduce, run `TestSceneButtonSystemNavigation` ensuring `TestConstructor` runs before `TestFastShortcutKeys`.
             detachedBeatmapStore?.Dispose();
+
+            // Clean up audio devices to prevent hanging threads on exit
+            try
+            {
+                // Free ASIO device if currently active
+                if (Audio.AudioDevice.Value?.StartsWith("ASIO:", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    // Stop ASIO device processing
+                    AsioDeviceManager.StopDevice();
+                    AsioDeviceManager.FreeDevice();
+                }
+
+                // Free the current audio device (WASAPI or other)
+                // This ensures all audio threads are properly terminated
+                Audio?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                // Log any errors during audio cleanup but don't prevent shutdown
+                Logger.Log($"Error during audio cleanup: {ex.Message}", LoggingTarget.Runtime, LogLevel.Error);
+            }
 
             base.Dispose(isDisposing);
 
@@ -1331,9 +1364,6 @@ namespace osu.Game
 
             // Importantly, this should be run after binding PostNotification to the import handlers so they can present the import after game startup.
             handleStartupImport();
-            
-            // Show server information notification on startup
-            showServerInfoNotification();
         }
 
         private void handleBackButton()
@@ -1366,16 +1396,6 @@ namespace osu.Game
                     }
                 }
             }
-        }
-
-        private void showServerInfoNotification()
-        {
-            // Show server information notification after a brief delay to ensure all components are loaded
-            Scheduler.AddDelayed(() =>
-            {
-                string currentServerUrl = API.Endpoints.APIUrl;
-                Notifications.Post(new ServerInfoNotification(currentServerUrl));
-            }, 2000); // 2 second delay to allow other startup notifications to appear first
         }
 
         private void showOverlayAboveOthers(OverlayContainer overlay, OverlayContainer[] otherOverlays)
@@ -1635,13 +1655,162 @@ namespace osu.Game
         #region Inactive audio dimming
 
         private readonly BindableDouble inactiveVolumeFade = new BindableDouble();
+        private string originalAsioDevice;
+        private bool temporarilyDisabledAsio;
+        private bool hasInitializedAudio = false;
+
+        // Audio pausing system for ASIO stability
+        private bool audioPausedOnInactive = false;
+        private float? originalAsioBufferSize = null;
 
         private void updateActiveState(bool isActive)
         {
+            // Skip ASIO handling during initial load to prevent switching away from configured device
+            if (!hasInitializedAudio)
+            {
+                hasInitializedAudio = true;
+
+                // Only apply volume fade during initialization
+                if (isActive)
+                {
+                    this.TransformBindableTo(inactiveVolumeFade, 1, 400, Easing.OutQuint);
+                }
+                else
+                {
+                    // Apply appropriate volume fade without changing device
+                    if (Audio.AudioDevice.Value?.StartsWith("ASIO:", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        // For ASIO devices, set volume directly to prevent audio artifacts
+                        inactiveVolumeFade.Value = LocalConfig.Get<double>(OsuSetting.VolumeInactive);
+                    }
+                    else
+                    {
+                        this.TransformBindableTo(inactiveVolumeFade, LocalConfig.Get<double>(OsuSetting.VolumeInactive), 4000, Easing.OutQuint);
+                    }
+                }
+                return;
+            }
+
             if (isActive)
-                this.TransformBindableTo(inactiveVolumeFade, 1, 400, Easing.OutQuint);
+            {
+                // Resume audio if it was paused for ASIO
+                if (audioPausedOnInactive)
+                {
+                    Logger.Log("Starting ASIO hot reload to restore audio...", LoggingTarget.Runtime, LogLevel.Debug);
+
+                    // Restore original ASIO buffer size if it was changed
+                    if (originalAsioBufferSize.HasValue)
+                    {
+                        var asioBufferSizeBindable = LocalConfig.GetBindable<float>(OsuSetting.AsioBufferSize);
+                        asioBufferSizeBindable.Value = originalAsioBufferSize.Value;
+                        Logger.Log($"Restored ASIO buffer size to {originalAsioBufferSize.Value} samples", LoggingTarget.Runtime, LogLevel.Debug);
+                        originalAsioBufferSize = null;
+                    }
+
+                    // Perform ASIO hot reload to ensure clean state
+                    string currentDevice = Audio.AudioDevice.Value;
+                    if (currentDevice?.StartsWith("ASIO:", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        Logger.Log($"Performing ASIO hot reload for device: {currentDevice}", LoggingTarget.Runtime, LogLevel.Debug);
+
+                        // Set volume to minimum for smooth transition
+                        inactiveVolumeFade.Value = 0.01;
+
+                        // Step 1: Clear the ASIO device
+                        Scheduler.AddDelayed(() =>
+                        {
+                            Audio.AudioDevice.Value = null;
+                            Logger.Log("ASIO device cleared for hot reload", LoggingTarget.Runtime, LogLevel.Debug);
+
+                            // Step 2: Restore the ASIO device after a short delay
+                            Scheduler.AddDelayed(() =>
+                            {
+                                Audio.AudioDevice.Value = currentDevice;
+                                Logger.Log("ASIO device restored, starting audio playback", LoggingTarget.Runtime, LogLevel.Debug);
+
+                                // Step 3: Start music and fade volume
+                                Scheduler.AddDelayed(() =>
+                                {
+                                    var musicController = dependencies.Get<MusicController>();
+                                    if (musicController != null)
+                                    {
+                                        musicController.Play(requestedByUser: false);
+                                        Logger.Log("Audio playback started after ASIO hot reload", LoggingTarget.Runtime, LogLevel.Debug);
+
+                                        // Wait 2 seconds then fade volume up to normal
+                                        using (BeginDelayedSequence(2000))
+                                        {
+                                            this.TransformBindableTo(inactiveVolumeFade, 1, 1000, Easing.OutQuint);
+                                        }
+                                    }
+                                }, 200); // Wait for device to be fully initialized
+                            }, 100); // Small delay for device cleanup
+                        }, 50); // Initial delay
+                    }
+                    else
+                    {
+                        // Fallback for non-ASIO devices or if device name is missing
+                        Logger.Log("No ASIO device detected, using standard audio resume", LoggingTarget.Runtime, LogLevel.Debug);
+                        var musicController = dependencies.Get<MusicController>();
+                        if (musicController != null)
+                        {
+                            inactiveVolumeFade.Value = 0;
+                            musicController.Play(requestedByUser: false);
+
+                            using (BeginDelayedSequence(2000))
+                            {
+                                this.TransformBindableTo(inactiveVolumeFade, 1, 1000, Easing.OutQuint);
+                            }
+                        }
+                    }
+
+                    audioPausedOnInactive = false;
+                }
+                else
+                {
+                    // Standard volume restore for non-ASIO or when audio wasn't paused
+                    this.TransformBindableTo(inactiveVolumeFade, 1, 400, Easing.OutQuint);
+                }
+            }
             else
-                this.TransformBindableTo(inactiveVolumeFade, LocalConfig.Get<double>(OsuSetting.VolumeInactive), 4000, Easing.OutQuint);
+            {
+                // Check if we should pause audio for ASIO devices
+                if (Audio.AudioDevice.Value?.StartsWith("ASIO:", StringComparison.OrdinalIgnoreCase) == true &&
+                    LocalConfig.Get<bool>(OsuSetting.AsioPauseAudioOnInactive))
+                {
+                    var musicController = dependencies.Get<MusicController>();
+                    if (musicController != null && musicController.IsPlaying)
+                    {
+                        musicController.Stop(requestedByUser: false);
+                        audioPausedOnInactive = true;
+                        Logger.Log("Paused audio playback for ASIO device while window inactive", LoggingTarget.Runtime, LogLevel.Debug);
+
+                        // Save current buffer size and set to inactive buffer size (after stopping audio)
+                        var asioBufferSizeBindable = LocalConfig.GetBindable<float>(OsuSetting.AsioBufferSize);
+                        originalAsioBufferSize = asioBufferSizeBindable.Value;
+
+                        float inactiveBufferSize = LocalConfig.Get<float>(OsuSetting.AsioInactiveBufferSize);
+                        if (Math.Abs(originalAsioBufferSize.Value - inactiveBufferSize) > 0.1f) // Only change if different
+                        {
+                            asioBufferSizeBindable.Value = inactiveBufferSize;
+                            Logger.Log($"Set ASIO buffer size to {inactiveBufferSize} samples for inactive state (original: {originalAsioBufferSize.Value})", LoggingTarget.Runtime, LogLevel.Debug);
+                        }
+                        else
+                        {
+                            // If buffer sizes are the same, no need to track
+                            originalAsioBufferSize = null;
+                        }
+                    }
+
+                    // Set volume directly without fade to prevent audio artifacts
+                    inactiveVolumeFade.Value = LocalConfig.Get<double>(OsuSetting.VolumeInactive);
+                }
+                else
+                {
+                    // Standard volume fade for non-ASIO devices or when pause is disabled
+                    this.TransformBindableTo(inactiveVolumeFade, LocalConfig.Get<double>(OsuSetting.VolumeInactive), 4000, Easing.OutQuint);
+                }
+            }
         }
 
         #endregion
@@ -1659,6 +1828,28 @@ namespace osu.Game
             {
                 Scheduler.Add(introScreen.MakeCurrent);
                 return true;
+            }
+
+            // Clean up audio devices before exit to prevent hanging threads
+            try
+            {
+                // If we have a temporarily disabled ASIO device, restore it first to ensure proper cleanup
+                if (temporarilyDisabledAsio && !string.IsNullOrEmpty(originalAsioDevice))
+                {
+                    Audio.AudioDevice.Value = originalAsioDevice;
+                    temporarilyDisabledAsio = false;
+                    originalAsioDevice = null;
+                }
+
+                // Stop ASIO device processing if active
+                if (Audio.AudioDevice.Value?.StartsWith("ASIO:", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    AsioDeviceManager.StopDevice();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Error during pre-exit audio cleanup: {ex.Message}", LoggingTarget.Runtime, LogLevel.Error);
             }
 
             return base.OnExiting();

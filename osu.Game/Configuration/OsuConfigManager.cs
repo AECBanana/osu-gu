@@ -109,6 +109,10 @@ namespace osu.Game.Configuration
             SetDefault(OsuSetting.MenuTips, true);
 
             SetDefault(OsuSetting.AudioOffset, 0, -500.0, 500.0, 1);
+            SetDefault(OsuSetting.AudioDeviceBufferLength, 10.0, 1.0, 100.0, 1.0);
+            SetDefault(OsuSetting.AsioBufferSize, 256f, 2f, 8192f, 1f);
+            SetDefault(OsuSetting.AsioPauseAudioOnInactive, true);
+            SetDefault(OsuSetting.AsioInactiveBufferSize, 1024f, 64f, 8192f, 1f);
 
             SetDefault(OsuSetting.AutomaticallyAdjustBeatmapOffset, false);
 
@@ -508,6 +512,9 @@ namespace osu.Game.Configuration
         /// Automatically adjust beatmap offset based on detection.
         /// </summary>
         AutomaticallyAdjustBeatmapOffset,
-
+        AudioDeviceBufferLength,
+        AsioBufferSize,
+        AsioPauseAudioOnInactive,
+        AsioInactiveBufferSize,
     }
 }
