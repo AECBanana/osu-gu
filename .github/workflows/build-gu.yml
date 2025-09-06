@@ -36,6 +36,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        submodules: recursive
     - name: Determine version
       id: version
       shell: bash
@@ -271,7 +272,7 @@ jobs:
         rm -rf publish/${{ matrix.runtime }}
 
     - name: Restore dependencies for specific runtime
-      timeout-minutes: 15
+      timeout-minutes: 60
       shell: bash
       run: |
         echo "Restoring packages for runtime: ${{ matrix.runtime }}"
@@ -490,12 +491,13 @@ jobs:
     name: CI Build (no release)
     if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        submodules: recursive
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
