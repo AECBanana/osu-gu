@@ -85,7 +85,7 @@ namespace osu.Game.Online
                         break;
 
                     case RulesetInfo.CATCH_MODE_SHORTNAME:
-                        RefetchStatistics(ruleset.CreateSpecialRuleset(RulesetInfo.CATCH_MODE_SHORTNAME, RulesetInfo.CATCH_RELAX_ONLINE_ID));
+                        RefetchStatistics(ruleset.CreateSpecialRuleset(RulesetInfo.CATCH_RELAX_MODE_SHORTNAME, RulesetInfo.CATCH_RELAX_ONLINE_ID));
                         break;
                 }
             }
