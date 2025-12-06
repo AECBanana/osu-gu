@@ -44,15 +44,22 @@ namespace osu.Game.Overlays.Settings.Sections.General
 
             bool isDesktop = RuntimeInfo.IsDesktop;
 
+            // Add GU-specific disable auto-update option
+            Add(new SettingsCheckbox
+            {
+                LabelText = "Disable automatic updates (GU)",
+                Current = config.GetBindable<bool>(OsuSetting.DisableAutomaticUpdates),
+                Keywords = new[] { "update", "automatic", "disable", "gu" },
+            });
+
             // For simplicity, hide the concept of release streams from mobile users.
             if (isDesktop)
             {
-                // Add GU-specific disable auto-update option
-                Add(new SettingsCheckbox
+                Add(releaseStreamDropdown = new SettingsEnumDropdown<ReleaseStream>
                 {
-                    LabelText = "Disable automatic updates (GU)",
-                    Current = config.GetBindable<bool>(OsuSetting.DisableAutomaticUpdates),
-                    Keywords = new[] { "update", "automatic", "disable", "gu" },
+                    LabelText = GeneralSettingsStrings.ReleaseStream,
+                    Current = { Value = configReleaseStream.Value },
+                    Keywords = new[] { @"version" },
                 });
 
                 if (updateManager!.FixedReleaseStream != null)
