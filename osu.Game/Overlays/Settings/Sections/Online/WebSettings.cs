@@ -9,8 +9,8 @@ using osu.Framework.Graphics;
 using osu.Framework.Localisation;
 using osu.Framework.Threading;
 using osu.Game.Configuration;
+using osu.Game.Graphics.UserInterfaceV2;
 using osu.Game.Localisation;
-
 
 namespace osu.Game.Overlays.Settings.Sections.Online
 {
@@ -28,28 +28,34 @@ namespace osu.Game.Overlays.Settings.Sections.Online
         {
             Children = new Drawable[]
             {
-                new SettingsCheckbox
+                new SettingsItemV2(new FormCheckBox
                 {
-                    LabelText = OnlineSettingsStrings.ExternalLinkWarning,
+                    Caption = OnlineSettingsStrings.ExternalLinkWarning,
                     Current = config.GetBindable<bool>(OsuSetting.ExternalLinkWarning)
-                },
-                new SettingsCheckbox
+                }),
+                new SettingsItemV2(new FormCheckBox
                 {
-                    LabelText = OnlineSettingsStrings.PreferNoVideo,
-                    Keywords = new[] { "no-video" },
+                    Caption = OnlineSettingsStrings.PreferNoVideo,
                     Current = config.GetBindable<bool>(OsuSetting.PreferNoVideo)
-                },
-                new SettingsCheckbox
+                })
                 {
-                    LabelText = OnlineSettingsStrings.AutomaticallyDownloadMissingBeatmaps,
-                    Keywords = new[] { "spectator", "replay" },
+                    Keywords = new[] { "no-video" },
+                },
+                new SettingsItemV2(new FormCheckBox
+                {
+                    Caption = OnlineSettingsStrings.AutomaticallyDownloadMissingBeatmaps,
                     Current = config.GetBindable<bool>(OsuSetting.AutomaticallyDownloadMissingBeatmaps),
-                },
-                new SettingsCheckbox
+                })
                 {
-                    LabelText = OnlineSettingsStrings.ShowExplicitContent,
-                    Keywords = new[] { "nsfw", "18+", "offensive" },
+                    Keywords = new[] { "spectator", "replay" },
+                },
+                new SettingsItemV2(new FormCheckBox
+                {
+                    Caption = OnlineSettingsStrings.ShowExplicitContent,
                     Current = config.GetBindable<bool>(OsuSetting.ShowOnlineExplicitContent),
+                })
+                {
+                    Keywords = new[] { "nsfw", "18+", "offensive" }
                 },
                 customApiUrlTextBox = new SettingsTextBox
                 {
@@ -72,11 +78,11 @@ namespace osu.Game.Overlays.Settings.Sections.Online
         // - 端口：可选，范围 1–65535（在正则后做数值校验）
         private static readonly Regex hostPortPattern = new Regex(
             pattern:
-                @"^(?:" +
-                    @"(?:(?:[A-Za-z0-9-]+)\.)+[A-Za-z0-9-]+" +                                  // multi-level domain (at least one dot)
-                @"|" +
-                    @"(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})" +   // IPv4 0-255
-                @")(?::(?<port>\d{1,5}))?$",
+            @"^(?:" +
+            @"(?:(?:[A-Za-z0-9-]+)\.)+[A-Za-z0-9-]+" + // multi-level domain (at least one dot)
+            @"|" +
+            @"(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})" + // IPv4 0-255
+            @")(?::(?<port>\d{1,5}))?$",
             options: RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         private void onCustomApiUrlChanged(ValueChangedEvent<string> e)
@@ -100,12 +106,15 @@ namespace osu.Game.Overlays.Settings.Sections.Online
                     customApiUrlTextBox.SetNoticeText(string.Empty, false);
                     return;
                 }
+
                 string hostPort = stripSchemeAndPath(rawInput);
+
                 if (!isValidHostPort(hostPort))
                 {
                     customApiUrlTextBox.SetNoticeText(OnlineSettingsStrings.CustomApiUrlInvalid, true);
                     return;
                 }
+
                 string normalised = "https://" + hostPort;
                 customApiUrlTextBox.SetNoticeText(string.Empty, false);
                 maybeShowRestartIfChanged(normalised);
@@ -119,11 +128,13 @@ namespace osu.Game.Overlays.Settings.Sections.Online
 
             // 校验端口范围（如果提供）
             var g = m.Groups["port"];
+
             if (g.Success)
             {
                 if (!int.TryParse(g.Value, out int port)) return false;
                 if (port < 1 || port > 65535) return false;
             }
+
             return true;
         }
 
